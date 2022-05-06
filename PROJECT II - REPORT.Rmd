@@ -1,0 +1,533 @@
+---
+title: "Project II- Forecasting Cinema Sales"
+author: "Group H"
+output: html_document
+---
+
+# Introduction
+
+In the last two years and especially since covid-19, a clear shift in consumer's behaviour has been observed. In 2020, 36% of the individuals asked declared they would prefer to stream a film at home rather than visit a cinema. With the arising success of streaming platforms such as Netflix, one might doubt in the future of movie theatres. Therefore, forecasting the sales level can be valuable for cinemas. It gives them the ability to make informed business decisions, develop data-driven strategies, estimates the costs, and undertake actions to meet their target profit level.
+
+The goal of our project is to forecast the number of tickets sold in November 2018 for the best seller film for the cinema with the highest sales. To answer this question, thanks to the data provided by the cinema, two models will be used: the ARIMA and the regression model. 
+
+__Description of the data__
+
+The time series starts on the 4th July 2018 and ends on the 4th of November of the same year. The data set is composed initially of 5 variables and 123 observations. The variables are the following:
+• Date: date the sales take place
+• Tickets sold: number of tickets sold in a day for a certain movie at a certain cinema
+• Tickets price: price for one movie ticket for a certain movie at a certain cinema
+• Show time: the number of screening hours for a certain movie at a certain cinema
+• Capacity: number of seats available in one room of a certain cinema.
+
+```{r, echo=F, message =F, warning =F}
+##WRANGLING PART 1
+#Import Setup 
+source(here::here("setup/setup.R"))
+#Import Dataset
+data_cinema <- read_csv("data/data_cinema.csv")
+
+#Rename data_cinema as Cinema 
+Cinema <- data_cinema
+#Transform Film_Code and Cinema_Code into Factor 
+Cinema[1:2] <- lapply(Cinema[1:2], as.factor)
+```
+
+# EDA
+
+The exploratory data analysis has been performed using the data provided by the 246 cinemas for the 48 different movies.
+
+### Univariate Analysis 
+
+__Distribution Tickets Sold__
+
+This first graph represents the distribution of the number of tickets sold. We can see that the maximum number of tickets sold in one day is 311’469. The minimum number of tickets sold in one day is 0. The average number of tickets sold in one day is 175’860 tickets (red dashed line). There is a lot of variance in the number of tickets sold. 
+
+```{r,echo=F, message =F, warning =F}
+#Tickets sold in one cinema for a given movie 
+cinema1 <- Cinema %>%
+  group_by(cinema_code) %>%
+  mutate(tickets_sold = sum(tickets_sold)) %>%
+  distinct()
+#Distribution Ticket sold
+ggplot(cinema1, mapping = aes(x = tickets_sold)) +
+  geom_histogram(color = "darkblue", fill = "lightblue") +  
+  geom_vline(
+    aes(xintercept = mean(tickets_sold)),
+    color = "red",
+    linetype = "dashed",
+    size = 1
+  ) +
+  xlab("Ticket Sold") +
+  ylab("") +
+  theme_minimal() +
+  labs(title = "Distribution Ticket Sold",
+       subtitle = "Mean: 175'860") +
+   scale_x_continuous(limits = c(0, 315000),
+                      labels = function(x) format(x, scientific = FALSE)) +
+  theme(plot.title = element_text(
+    size = 12,
+    color = "black",
+    lineheight = 1.2
+  ))
+```
+
+__Distribution : Ticket Price, Show Time, Capacity__
+
+The first graph represents the variable ticket price, which is ranged between 483.9 and 700'000. The second graph represents the variable show time and is ranged between 1 and 60 hours. The third graph represents the capacity and is ranged between 10 and 9'692 seats. From these graphs, several assumptions are done. First, due to the high range of prices, we assume it is a foreign currency. Secondly, as the maximum number of screening hours exceeds 24 hours, we will assume that one movie can be shown in several rooms of one cinema simultaneously. The last assumption is that the capacity represents the number of seats available in one cinema room.
+
+```{r, echo=F, message =F, warning =F, fig.width = 7}
+#Density Plot: Tickets Price
+plot1 <- ggplot(Cinema, aes(x=ticket_price))+
+  geom_density(color="darkblue", fill="lightblue") +
+  geom_vline(aes(xintercept=mean(ticket_price)),
+            color="red", linetype="dashed", size=1) +
+  ylab("") +
+  xlab("Prices") +
+  labs(title = "Density Plot - Ticket Prices", subtitle = "Mean:  81234.6") +
+  theme(plot.title = element_text(size = 15),
+        plot.subtitle = element_text(size = 10)) +
+  scale_x_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE))
+
+#Density Plot: Show Time
+plot2 <- ggplot(Cinema, aes(x=show_time))+
+  geom_density(color="darkblue", fill="lightblue") +
+  geom_vline(aes(xintercept=mean(show_time)),
+            color="red", linetype="dashed", size=1) +
+  ylab("") +
+  xlab("Show Time") +
+  labs(title = "Density Plot - Showtime", subtitle = "Mean: 3.935 hours") +
+  theme(plot.title = element_text(size = 15),
+        plot.subtitle = element_text(size = 10)) +
+  scale_x_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE))
+
+#Density Plot: Capacity
+plot3 <- ggplot(Cinema, aes(x=capacity))+
+  geom_density(color="darkblue", fill="lightblue") +
+  geom_vline(aes(xintercept=mean(capacity, na.rm = T)),
+            color="red", linetype="dashed", size=1) +
+  ylab("") +
+  xlab("Capacity") +
+  labs(title = "Density Plot - Capacity", subtitle = "Mean: 855.0 places") +
+  theme(plot.title = element_text(size = 15),
+        plot.subtitle = element_text(size = 10)) +
+  scale_x_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE))
+
+plot1 + plot2 / plot3
+```
+
+__Correlation__
+
+The variable ticket sold is positively correlated to all the other variables. Ticket sold and ticket price are positively correlated (0.104), which can seem counterintuitive. The correlation between ticket sold and the screening hours is equal to 0.522 and the one between ticket sold and capacity is equal to 0.425. In conclusion, an increase in the capacity, ticket price and show time is associated to an increase in the number of tickets sold by the cinema.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#Correlation matrix: remove include = F to see results
+cinema_corr <- Cinema %>%
+  select(tickets_sold, ticket_price, show_time, occu_perc, capacity)
+ggpairs(cinema_corr)
+```
+
+# Analysis 
+
+The analysis and prediction part will be dedicated to the bestselling cinema for one film (best seller film).
+
+```{r, echo=F, message=F, warning=F}
+#Select Bestseller movie
+##Select Film with highest sale 
+bestseller.movie <- Cinema %>%
+  dplyr::select(film_code, total_sales) %>%
+  dplyr::group_by(film_code) %>%
+  mutate(total_sales = sum(total_sales)) %>%
+  distinct(film_code,total_sales) %>%
+  arrange(desc(total_sales))
+#RESULT: MOVIE WITH HIGHEST SALES = 1554 
+
+#Select Cinema 
+##Select cinema with highest capacity 
+cinema_capacity <- Cinema %>%
+  dplyr::select(cinema_code, capacity) %>%
+  group_by(cinema_code) %>%
+  mutate(capacity = sum(capacity)) %>%
+  distinct(cinema_code, capacity) %>%
+  arrange(desc(capacity))
+#RESULT: CINEMA WITH HIGHEST CAPACITY = 448
+
+#Select observations with: cinema 448 and movie 1554
+Cinema <- Cinema %>%
+  filter(film_code == "1554" & cinema_code == "448")
+##REMARK: 103observations for the Time Series 
+
+#Creation of the tsibble 
+cinema_final <- Cinema %>%
+  as_tsibble(key = c(film_code, cinema_code, tickets_sold), index = date)
+```
+
+
+### Missing Data
+
+Initially, the time series contains 102 observations from the 4th of July 2018 till the 3rd of November of the same year. However, as seen on the first left graph, the time series contains some missing data. 
+For some days, the number of tickets sold was not provided by the cinema. Therefore the gaps were filled with a model called auto.arima (see second graph). However, missing data reduces the performance of the forecasting models.
+
+
+```{r, echo=F, message=F, warning=F}
+#Make the gaps explicit with function fill_gaps
+cinema_gaps <- cinema_final %>%
+  select(date, cinema_code, tickets_sold) %>%
+  summarise(Total=sum(tickets_sold)) %>%
+  fill_gaps(Total = NA)
+#Plot the gaps 
+plot1 <- ggplot_na_distribution(cinema_gaps) 
+
+#Filling the gaps with auto.arima
+cinema_nogaps <- na_kalman(cinema_gaps, model="auto.arima")
+#Plot result 
+plot2 <- ggplot_na_imputations(cinema_gaps, cinema_nogaps)
+
+plot1 + plot2
+```
+
+### Seasonal and Trend decomposition
+
+To identify the seasonal and trend pattern in the time series, the following time series decomposition is represented.
+
+The whole time series is represented on the first graph, the lack of information in September can easily be identified. The second one represents the trend component, which decreases on the whole period. It shows that the sales continuously decrease over time. On the third graph we can observe the strong additive seasonality. The regular spikes represent the two highest sales day of the week, namely Tuesday and Friday. 
+There is no observable pattern in the last graph (remainders), meaning that most of the information about the sales is captured by the seasonal and trend component.  This is necessary for the implementation of forecasting models.
+
+```{r, echo=F, message=F, warning=F, include=FALSE}
+#Graph for the entire time series: remove include = F to see results
+cinema_nogaps %>%
+  autoplot(Total) +
+  ylab("Total Tickets Sold") + 
+  xlab("Days") +
+  ggtitle("Total Tickets sold - Time Series") +
+  theme(plot.title = element_text(size = 12))
+```
+
+```{r, echo=F, message=F, warning=F}
+#High Capacity - STL Decomposition 
+dcmp1 <- cinema_nogaps %>%
+  model(STL(log(Total)))
+dcmp1 %>% 
+  components() %>% 
+  autoplot()+ 
+  xlab("Days") +
+  ylab("Total Tickets sold") + 
+  ggtitle("Total Tickets sold - STL Decomposition")+
+  theme(plot.title = element_text(size = 12))
+```
+
+# Forecasting models
+
+To predict the number of tickets sold in November 2018, two models will be implemented and compared based on their results. 
+
+### ARIMA
+
+__Model__
+
+The results of the first model (ARIMA model) can be visualized on this graph. 
+The blue line represents the forecasts of the tickets sold for November 2018. The seasonal pattern of the previous month is considered meaning that the predicted sales will be higher on Tuesdays and Fridays. In addition, the trend of the forecasted sales is stagnating which is due to the slowly decreasing trend in the past. The confidence interval (represented by the blue range on the graph) is relatively narrow, indicating that there is 95% probability that confidence interval contains the future sales.
+
+
+```{r,echo=F, message=F, warning=F}
+#Model1 - ARIMA
+fit_ARIMA <- cinema_nogaps %>% 
+  model(ARIMA(log(Total)))
+
+fcast_ARIMA <- fit_ARIMA %>% 
+  forecast(h=30, positive=TRUE) 
+
+fcast_ARIMA %>% 
+  autoplot(cinema_nogaps) +
+  ggtitle("Total Tickets sold - ARIMA")+
+  ylab("Total Tickets Sold") +
+  theme(plot.title = element_text(size = 12),
+        legend.position = "none")
+```
+__Evaluating the model__
+
+By analysing the predicted vs, the observed sales one can assess the goodness of fit of the model. The closer they are, the more the model fits the data. The forecasted sales follow well the real sales fluctuations and the decreasing trend of the sales. Nevertheless, there are some differences between the predicted and observed sales (for example, between September and October). This can be explained by the lack of data provided by the cinema.
+
+```{r}
+#Fitted Values 
+augment(fit_ARIMA) %>% 
+  ggplot(aes(x=date))+ 
+  geom_line(aes(y=Total, colour="Observed sales"))+ 
+  geom_line(aes(y=.fitted, colour="Predicted sales")) +
+  ggtitle("Observed vs. Predicted Sales") +
+  theme(plot.title = element_text(size = 12)) +
+  ylab("Total Tickets Sold") +
+  xlab("Days") +
+  guides(color = guide_legend("Legend"))
+```
+
+Furthermore, a statistical test (Ljung Box test) was computed to confirm the validity of the model to ensure that most of the relevant information about the cinema sales were captured by the implemented model.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#Residuals Analysis - Autocorrelation + Distribution
+fit_ARIMA %>% 
+  gg_tsresiduals() +
+  ggtitle("Residuals - ARIMA Model")
+#Ljung Box Test
+kable1 <- augment(fit_ARIMA) %>% 
+  features(.innov, ljung_box)
+
+kable(kable1, align = 'c', caption = "Ljung Box Test (ARIMA)") %>%
+kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
+#REMOVE INCLUDE = F to see results
+```
+
+__Arima model conclusion__
+
+The ARIMA model is valid and predicts well the tickets sold for November 2018. However, the model uses only past values of tickets sold to make predictions. Indeed, the number of tickets sold by the cinema could be related to other variables as mentioned in the EDA part. In the next section, a regression model is implemented to forecast the daily number of tickets sold using the capacity, ticket price and show time as predictors. 
+
+### Regression model 
+
+The aim of this model is to forecast the sales using all the information provided by the cinema and to compare them with the previous model using only the sales data. By doing so, the cinema will be able to assess whether these different variables influence its sales level. 
+
+__Regression model with 4 predictors__
+
+The table shows the coefficients (in %) of the regression model. The trend coefficient shows that every day, the number of tickets sold decrease by 1%. The first predictor capacity is positive, an increase in cinema capacity is associated to higher tickets sales. The price coefficient is negative and very small meaning that if the ticket price increases by 1000 monetary units, the number of tickets sold decrease by 0.2%. The negative show time coefficient shows that an increase in the movie show time is associated to lower tickets sales.
+
+
+The weekdays variable has 7 levels, one for each day of the week. The reference level is Monday. As we can see the coefficients are positive for all days of the week, meaning that switching from Monday to any other day of the week is associated with higher tickets sales. More precisely, when switching from Monday to Tuesday, the number of tickets sold increase on average by 56%. To sum up, high sales are associated to high-capacity rooms, low ticket price and low screening time. 
+To build a regression model, the ticket prices, show times and room capacities of the cinema need to be predicted for November 2018 as they were not provided by the cinema. The two following methods will be used: ex-ante forecast using ARIMA and scenario-based forecast.
+
+
+```{r,echo =F, message =F, warning =F}
+#DATAFRAME WITH PREDICTORS (PRICES + CAPACITY + SHOW_TIME)
+##Dataframe: Regression model
+cinema_reg <- cinema_final %>%
+  select(date, tickets_sold, ticket_price, capacity, show_time) %>%
+  as_tsibble(key=c(tickets_sold, capacity, show_time), index=date) %>% 
+  summarise(Capacity=sum(capacity), 
+            Total=sum(tickets_sold), 
+            Show_time=sum(show_time), 
+            Price=sum(ticket_price)) %>% 
+  fill_gaps(Total=NA)
+#Filling the gaps with auto.arima
+cinema_nogaps_reg <- na_kalman(cinema_reg, model="auto.arima")
+
+#REGRESSION MODEL WITH PREDICTORS: WEEKDAYS + PRICES + CAPACITY + SHOW TIME 
+##Creation Dummy Variable for days of the week 
+cinema_nogaps_reg1 <- cinema_nogaps_reg %>%
+  mutate(weekday = weekdays(date))
+cinema_nogaps_reg1$weekday <- as.factor(cinema_nogaps_reg1$weekday)
+cinema_nogaps_reg1$weekday <- relevel(cinema_nogaps_reg1$weekday, ref = "lundi") #if shows error try with "Lundi" instead of "lundi"(depends on the computer used)
+
+##Regression model
+fit1 <- cinema_nogaps_reg1 %>%
+  model(TSLM(log(Total) ~ trend() + Capacity + Price + Show_time + weekday))
+
+##Report of the model (with transformation of coefficients)
+kable2 <- tidy(fit1) %>% 
+  mutate(pceffect = (exp(estimate) - 1) * 100) %>%
+  mutate(pceffect = round(pceffect, digits = 4)) %>%
+  select(-c(.model, estimate)) %>%
+  select(term, pceffect, everything())
+
+kable(kable2, digits = 4, align = 'c', caption = "Report Regression Model") %>%
+kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)%>%
+  scroll_box(height = "300px", width = "500px")
+
+```
+To build a regression model, the ticket prices, show time and capacity of the cinema need to be predicted. The two following methods will be used: ex-ante forecast using ARIMA and scenario-based forecast.
+
+#### Ex-ante forecast with ARIMA 
+
+__Regression model__
+
+Here, once each predictor is forecasted with an ARIMA model, the regression model is applied to predict the number of tickets sold. From the graph, we can see that the seasonal pattern is captured by the model. Moreover, the predicted sales seem to be slightly higher compared to the previous month and the sales predicted with ARIMA. Indeed, this model is more optimistic about the future sales of the cinema. As the confidence interval is even lower than with the ARIMA model, it means that this model is more precise.
+
+```{r,echo =F, message =F, warning =F}
+#Step1: Forecast prices with Arima
+
+##Model ARIMA: Price
+price_arima <- cinema_nogaps_reg1 %>% 
+  model(ARIMA(Price))
+##Forecast price for the next month
+fc_price <- price_arima %>% 
+  forecast(h=30)
+##Forecasts for next month - Price
+price_forecast <- as.numeric(fc_price$.mean)
+
+#Step2: Forecast Capacity with Arima
+##Model ARIMA: Capacity
+capacity_arima <- cinema_nogaps_reg1 %>% 
+  model(ARIMA(Capacity))
+##Forecast Capacity for the next month 
+fc_capacity <- capacity_arima %>% 
+  forecast(h=30)
+##Forecasts for next month - Capacity
+capacity_forecast <- as.numeric(fc_capacity$.mean)
+
+#Step3: Forecast Show Time with Arima 
+##Model ARIMA: Show Time
+showtime_arima <- cinema_nogaps_reg1 %>% 
+  model(ARIMA(Show_time))
+##Forecast Capacity for the next month 
+fc_showtime <- showtime_arima %>% 
+  forecast(h=30)
+##Forecasts for next month - Capacity
+showtime_forecast <- as.numeric(fc_showtime$.mean)
+
+#MODEL TSLM WITH PREDICTORS FORECASTED USING ARIMA
+fit_ARIMA_TSLM <-
+  cinema_nogaps_reg1 %>% 
+  model(TSLM(log(Total) ~ trend() + Capacity + Show_time + Price + weekday))
+
+##Forecasts Table 
+new_ARIMA <- scenarios(
+  "ARIMA" = new_data(cinema_nogaps_reg1, 30) %>%
+    mutate(Capacity = capacity_forecast,
+          Show_time= showtime_forecast,
+          Price= price_forecast,
+          weekday = weekdays(date)),
+  names_to = "Scenario")
+##Forecasts
+fcast_ARIMA_TSLM <- forecast(fit_ARIMA_TSLM, new_ARIMA)
+##Forecasts Plot
+cinema_nogaps_reg1 %>%
+  autoplot(Total) +
+  autolayer(fcast_ARIMA_TSLM) +
+  labs(title = "Total Tickets Sold - TSLM", 
+       y = "Tickets sold", x ="Days") +
+  theme(legend.position = "none")
+```
+
+__Performance of the model__
+
+As previously the observed and predicted sales are compared. From the graph, we can see that between mid-July and mid-August the fluctuations in the predicted sales are higher than in the real sales. Overall, the regression model tends to over-estimate the number of tickets sold. 
+
+```{r, echo=F,message=F,warning=F}
+#Graph Fitted values vs. Observations
+augment(fit_ARIMA_TSLM) %>% 
+  ggplot(aes(x=date))+ 
+  geom_line(aes(y=Total, colour="Observed sales"))+ 
+  geom_line(aes(y=.fitted, colour="Predicted sales")) +
+  ggtitle("Observed vs. Predicted Sales") +
+  theme(plot.title = element_text(size = 12)) +
+  ylab("Total Tickets Sold") +
+  xlab("Days") +
+  guides(color = guide_legend("Legend"))
+```
+As for the previous model, a statistical test was conducted to ensure the validity of the model.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#Residuals Analysis
+fit_ARIMA_TSLM %>% 
+  gg_tsresiduals() +
+  ggtitle("Residuals - TSLM Model")
+#Ljung_Box Test 
+kable3 <- augment(fit_ARIMA_TSLM) %>% 
+  features(.innov, ljung_box)
+
+kable(kable3, align = 'c', caption = "Ljung Box Test (TSLM)") %>%
+kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
+#Residuals vs. Fitted Values 
+augment(fit_ARIMA_TSLM) %>%
+  ggplot(aes(x = .fitted, y = .innov)) +
+  geom_point() +
+  scale_x_log10()+
+  ggtitle("Residuals vs Fitted values")+
+  theme(plot.title = element_text(size = 12)) +
+  ylab("Residuals") +
+  xlab("Fitted values")
+```
+
+#### Scenario based forecasting
+
+As mentioned above, higher price is associated to lower sales. Therefore, three different price scenarios will be analysed.
+
+__Model - Price Scenarios__
+
+Each scenario represents a different ticket price (minimum, mean and maximum price) while the other predictors (show time and capacity) are constant for the predicted period. The graph shows that the sales are the highest for the minimum ticket price. This assumption makes sense and illustrate the negative coefficient related to the price we saw above for the regression model. However, the confidence intervals are large, the predicted sales of each scenario are much higher than for the previous month and do not follow the decreasing trend. The previous regression model (Ex-ante with ARIMA) is more realistic and preferred to predict the cinema’s future sales.
+
+```{r,echo=F, message=F, warning=F}
+#Scenario1: Price -> max prices vs. min prices vs. mean prices
+new_cons_price <- scenarios(
+  "Max price" = new_data(cinema_nogaps_reg1, 28) %>%
+    mutate(Show_time= mean(cinema_nogaps_reg1$Show_time),
+           Capacity= mean(cinema_nogaps_reg1$Capacity),
+           weekday = weekdays(date),
+           Price= max(cinema_nogaps_reg1$Price)),
+  "Min price" = new_data(cinema_nogaps_reg1, 28) %>%
+    mutate(Show_time= mean(cinema_nogaps_reg1$Show_time),
+           Capacity= mean(cinema_nogaps_reg1$Capacity),
+           weekday = weekdays(date),
+           Price= min(cinema_nogaps_reg1$Price)),
+  "Mean price" = new_data(cinema_nogaps_reg1, 28) %>%
+    mutate(Show_time= mean(cinema_nogaps_reg1$Show_time),
+           Capacity= mean(cinema_nogaps_reg1$Capacity),
+           weekday = weekdays(date),
+           Price= mean(cinema_nogaps_reg1$Price)),
+  names_to = "Scenario")
+##Forecasts with prices scenarios
+fcast_prices <- forecast(fit1, new_cons_price)
+
+##Plot forecasts for different prices scenarios 
+cinema_nogaps_reg1 %>%
+  autoplot(Total) +
+  autolayer(fcast_prices) +
+  labs(title = "Total Tickets Sold - TLSM (Scenarios Prices)", 
+       y = "Tickets sold", x= "")
+```
+
+### Comparison ARIMA and TSLM model
+
+__Forecasts comparison__
+
+The following table presents the forecasts for beginning November 2018 with both models. As observed during the analysis, the forecasts of the regression model are slightly higher compared to the ARIMA model (for example from 04/11/18 to 06/11/18). 
+
+The predicted number of tickets sold is approximatively constant for the whole month of November (while maintaining the high sales days on Tuesday and Friday). According to our analysis, the cinema should not worry about the future sales, they will not continue to decrease in November 2018. 
+
+
+```{r, echo=F, message =F, warning =F}
+#Forecasted values ARIMA
+tickets_ARIMA <- as.numeric(fcast_ARIMA$.mean)
+#Forecasted values TSLM
+tickets_TSLM <- as.numeric(fcast_ARIMA_TSLM$.mean)
+#Difference of forecasts between ARIMA AND TSLM
+diff <- (tickets_TSLM-tickets_ARIMA)
+
+#Create table forecasted values
+forecast_models <- data.frame(fcast_ARIMA_TSLM$date, tickets_TSLM, tickets_ARIMA, diff)
+
+kable(forecast_models,
+      align = 'c', 
+      table.attr = "style=\"color: black;\"",
+      caption = "Forecasts", 
+      col.names = c('Date', 'Tickets sold TSLM', 'Tickets sold ARIMA', "Difference TSLM-ARIMA")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F) %>%
+  scroll_box(height = "300px", width = "700px")
+```
+
+__Accuracy comparison__
+
+To evaluate the accuracy of the models, forecasts errors are computed. By comparing the two models, the regression model performs better in terms of accuracy. We can conclude that the regression model is more accurate and suitable for predicting the sales of the cinema. In fact, the capacity, screening time and ticket price are valuable information to consider when predicting the cinema sales. 
+
+```{r,echo=F, message=F, warning=F}
+accuracy_ARIMA <- as.data.frame(accuracy(fit_ARIMA))
+accuracy_TSLM <- as.data.frame(accuracy(fit_ARIMA_TSLM))
+kable4 <- rbind(accuracy_ARIMA,accuracy_TSLM)
+
+kable4 <- kable4 %>%
+  select(-.type) %>%
+  rename(model = ".model")
+
+kable(kable4, align = 'c', caption = "Accuracy") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
+```
+
+
+# Conclusion
+
+
+As useful and necessary forecasting sales might be it remains a tedious task. In our analysis, two different models were used and compared to predict the future sales of the cinema. The ARIMA model based on past values and the regression model that enabled us to add all the information provided about the cinema. Even though the regression model is more accurate and precise, it requires more information. Furthermore, it might be a more uncertain and complex model. 
+
+This analysis can be continued in multiple ways, one possibility could be to make forecasting combination: average the forecasts of the combined models or add other predictors (type of movie, weather, number of cinemas in the area...). Finally, it is important to keep in mind that the forecasts made for the cinema are an honest projection of what will happen given the information available. The aim of forecasting is to know the future to be able to do something about it. In the case of this cinema, the sales predicted for the next 30 days for the best seller film are constant, meaning that some marketing actions for example could be undertaken so that the real future sales are higher than predicted.
+
+
+
+
